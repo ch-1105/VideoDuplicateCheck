@@ -1,0 +1,70 @@
+# VideoDuplicateCheck
+
+Windows 桌面应用：基于视频内容特征（dHash + pHash）检测重复或近似重复视频。
+
+## 功能
+
+- 递归扫描目录，识别常见视频格式
+- 抽帧感知哈希（dHash + pHash）
+- 相似度阈值可调，支持近似重复聚类
+- SQLite 缓存支持增量扫描
+- 重复组展示 + 智能保留建议
+- 批量移动、回收站删除、永久删除
+- 结果导出 CSV / JSON
+- 首帧预览 + 系统播放器打开
+
+## 环境要求
+
+- Windows 10/11
+- Python 3.11+
+- 建议使用虚拟环境
+
+## 本地开发
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -r requirements.txt
+python -m src.main
+```
+
+## 测试与检查
+
+```bash
+.venv\Scripts\python.exe -m pytest
+.venv\Scripts\python.exe -m ruff check src tests
+```
+
+## 打包 EXE
+
+项目已内置打包脚本（含图标和版本信息）：
+
+- `scripts/build_onedir.bat`：生成目录版（更稳，推荐发布）
+- `scripts/build_onefile.bat`：生成单文件版（分发方便，启动通常更慢）
+- `scripts/clean_build.bat`：清理构建产物
+
+执行示例：
+
+```bat
+scripts\build_onedir.bat
+scripts\build_onefile.bat
+```
+
+产物路径：
+
+- onedir: `dist/onedir/VideoDuplicateCheck/VideoDuplicateCheck.exe`
+- onefile: `dist/onefile/VideoDuplicateCheck.exe`
+
+## 项目结构
+
+```text
+src/
+  core/      # 扫描、哈希、指纹、比较、缓存数据库
+  gui/       # 主界面、扫描面板、结果面板、预览、设置
+  workers/   # 后台扫描任务
+  utils/     # 文件操作、视频信息读取
+tests/       # 单元测试
+scripts/     # 打包脚本
+packaging/   # Windows 版本信息
+assets/      # 图标等资源
+```
