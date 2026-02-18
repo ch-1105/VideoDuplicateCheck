@@ -21,11 +21,18 @@ class CachedFingerprint:
 class FingerprintDatabase:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
-        self._conn = sqlite3.connect(db_path)
+        self._conn = sqlite3.connect(db_path, timeout=5.0)
         self._conn.row_factory = sqlite3.Row
+        self._configure_connection()
         self._pending_writes = 0
         self._commit_batch_size = 50
         self._init_schema()
+
+    def _configure_connection(self) -> None:
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA temp_store=MEMORY")
+        self._conn.execute("PRAGMA busy_timeout=5000")
 
     def close(self) -> None:
         self.flush()

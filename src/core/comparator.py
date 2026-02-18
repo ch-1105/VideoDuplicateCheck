@@ -37,6 +37,8 @@ def find_duplicate_groups(
             for target in candidates[idx + 1 :]:
                 if str(target.path) in visited:
                     continue
+                if not _metadata_candidate(source, target, duration_tolerance_seconds):
+                    continue
                 similarity = _combined_similarity(source, target)
                 if similarity >= similarity_threshold:
                     group.append(target)
@@ -63,6 +65,32 @@ def _combined_similarity(a: VideoFingerprint, b: VideoFingerprint) -> float:
     duration_gap = abs(a.duration_seconds - b.duration_seconds)
     duration_penalty = min(duration_gap / max(a.duration_seconds, b.duration_seconds, 1.0), 1.0)
     return (d_sim * 0.35 + p_sim * 0.65) * (1.0 - duration_penalty * 0.3)
+
+
+def _metadata_candidate(
+    source: VideoFingerprint,
+    target: VideoFingerprint,
+    duration_tolerance_seconds: float,
+) -> bool:
+    if abs(source.duration_seconds - target.duration_seconds) > duration_tolerance_seconds:
+        return False
+
+    if abs(_size_bucket(source.size_bytes) - _size_bucket(target.size_bytes)) > 2:
+        return False
+
+    if abs(_resolution_bucket(source) - _resolution_bucket(target)) > 2:
+        return False
+
+    return True
+
+
+def _size_bucket(size_bytes: int) -> int:
+    return max(1, size_bytes).bit_length() // 2
+
+
+def _resolution_bucket(fp: VideoFingerprint) -> int:
+    pixels = max(1, fp.width * fp.height)
+    return pixels.bit_length() // 2
 
 
 def _recommend_keep(items: list[VideoFingerprint]) -> VideoFingerprint:

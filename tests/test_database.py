@@ -42,3 +42,18 @@ def test_database_upsert_and_get_cached(tmp_path: Path) -> None:
         assert cached.p_hash == fp.p_hash
     finally:
         db.close()
+
+
+def test_database_uses_wal_mode(tmp_path: Path) -> None:
+    db_path = tmp_path / "cache.sqlite3"
+    db = FingerprintDatabase(db_path)
+    try:
+        journal_mode = db._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        synchronous = db._conn.execute("PRAGMA synchronous").fetchone()[0]
+        busy_timeout = db._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+
+        assert str(journal_mode).lower() == "wal"
+        assert int(synchronous) == 1
+        assert int(busy_timeout) == 5000
+    finally:
+        db.close()

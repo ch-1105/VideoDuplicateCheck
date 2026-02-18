@@ -8,10 +8,11 @@ import cv2
 from PySide6.QtCore import QObject, Signal
 
 from ..config import AppConfig
-from ..core.comparator import DuplicateGroup, find_duplicate_groups
+from ..core.comparator import DuplicateGroup
 from ..core.database import FingerprintDatabase
 from ..core.fingerprint import VideoFingerprint, extract_fingerprint
 from ..core.scanner import VideoScanner
+from .compare_worker import build_duplicate_groups
 
 
 def _read_signature(path: Path) -> tuple[Path, float, int] | None:
@@ -145,7 +146,7 @@ class ScanWorker(QObject):
         if not force and now - self._last_partial_emit_time < min_interval:
             return
 
-        groups = find_duplicate_groups(
+        groups = build_duplicate_groups(
             fingerprints,
             similarity_threshold=self._config.similarity_threshold,
             duration_tolerance_seconds=self._config.duration_tolerance_seconds,
@@ -321,7 +322,7 @@ class ScanWorker(QObject):
 
             self.status.emit("正在进行相似度比较...")
             self.current_task.emit("比较指纹并聚类分组")
-            groups: list[DuplicateGroup] = find_duplicate_groups(
+            groups: list[DuplicateGroup] = build_duplicate_groups(
                 fingerprints,
                 similarity_threshold=self._config.similarity_threshold,
                 duration_tolerance_seconds=self._config.duration_tolerance_seconds,
