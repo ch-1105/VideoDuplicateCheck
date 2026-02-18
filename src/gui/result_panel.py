@@ -135,9 +135,20 @@ class ResultPanel(QWidget):
         dst = QFileDialog.getExistingDirectory(self, "选择移动目标目录")
         if not dst:
             return
+        success = 0
+        failed: list[str] = []
         for path in selected:
-            if path.exists():
+            if not path.exists():
+                failed.append(f"{path}（文件不存在）")
+                continue
+            try:
                 move_file(path, Path(dst))
+                success += 1
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"{path}（{exc}）")
+
+        self._refresh_after_file_mutation()
+        self._show_operation_result("移动完成", success, len(selected), failed)
 
     def _delete_selected_to_recycle(self) -> None:
         selected = self._target_paths()
@@ -155,15 +166,18 @@ class ResultPanel(QWidget):
             return
 
         success = 0
+        failed: list[str] = []
         for path in selected:
-            if path.exists() and move_to_recycle_bin(path):
+            if not path.exists():
+                failed.append(f"{path}（文件不存在）")
+                continue
+            if move_to_recycle_bin(path):
                 success += 1
+            else:
+                failed.append(f"{path}（移动到回收站失败）")
 
-        QMessageBox.information(
-            self,
-            "回收站删除完成",
-            f"已移动到回收站: {success}/{len(selected)}",
-        )
+        self._refresh_after_file_mutation()
+        self._show_operation_result("回收站删除完成", success, len(selected), failed)
 
     def _delete_selected_permanent(self) -> None:
         selected = self._target_paths()
@@ -191,16 +205,19 @@ class ResultPanel(QWidget):
             return
 
         success = 0
+        failed: list[str] = []
         for path in selected:
-            if path.exists():
+            if not path.exists():
+                failed.append(f"{path}（文件不存在）")
+                continue
+            try:
                 delete_file(path)
                 success += 1
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"{path}（{exc}）")
 
-        QMessageBox.information(
-            self,
-            "永久删除完成",
-            f"已永久删除: {success}/{len(selected)}",
-        )
+        self._refresh_after_file_mutation()
+        self._show_operation_result("永久删除完成", success, len(selected), failed)
 
     def _play_selected(self) -> None:
         selected = self._first_selected_path()
@@ -356,3 +373,51 @@ class ResultPanel(QWidget):
             )
 
         Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _refresh_after_file_mutation(self) -> None:
+        refreshed: list[DuplicateGroup] = []
+        for group in self._groups:
+            remaining = [item for item in group.items if item.path.exists()]
+            if len(remaining) < 2:
+                continue
+
+            keep = group.recommended_keep
+            if not keep.path.exists():
+                keep = max(
+                    remaining,
+                    key=lambda item: (
+                        item.width * item.height,
+                        item.bitrate,
+                        item.size_bytes,
+                    ),
+                )
+
+            refreshed.append(
+                DuplicateGroup(
+                    items=remaining,
+                    similarity=group.similarity,
+                    recommended_keep=keep,
+                )
+            )
+
+        self.set_groups(refreshed)
+
+    def _show_operation_result(
+        self, title: str, success: int, total: int, failed: list[str]
+    ) -> None:
+        if failed:
+            preview = "\n".join(failed[:5])
+            if len(failed) > 5:
+                preview += f"\n... 还有 {len(failed) - 5} 项失败"
+            QMessageBox.warning(
+                self,
+                title,
+                f"成功: {success}/{total}\n失败: {len(failed)}\n\n失败详情:\n{preview}",
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            title,
+            f"成功: {success}/{total}",
+        )

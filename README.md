@@ -55,6 +55,8 @@ scripts\build_onefile.bat
 - onedir: `dist/onedir/VideoDuplicateCheck/VideoDuplicateCheck.exe`
 - onefile: `dist/onefile/VideoDuplicateCheck.exe`
 
+说明：如需调整输出位置，请以脚本中的 `DISTPATH` 参数为准。
+
 ## 项目结构
 
 ```text

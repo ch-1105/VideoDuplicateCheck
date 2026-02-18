@@ -4,5 +4,6 @@ config
 core
 gui
 main
+tests
 utils
 workers

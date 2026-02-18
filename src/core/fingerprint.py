@@ -46,16 +46,23 @@ def _hash_video(info: VideoInfo, frame_interval_seconds: int) -> FrameHashes:
     d_values: list[int] = []
     p_values: list[int] = []
     idx = 0
+    next_sample = 0
 
     while idx < total:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        if idx < next_sample:
+            if not cap.grab():
+                break
+            idx += 1
+            continue
+
         ok, frame = cap.read()
         if not ok:
-            idx += stride
-            continue
+            break
+
         d_values.append(dhash(frame))
         p_values.append(phash(frame))
-        idx += stride
+        next_sample += stride
+        idx += 1
 
     cap.release()
 

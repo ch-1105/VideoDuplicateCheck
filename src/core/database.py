@@ -23,9 +23,12 @@ class FingerprintDatabase:
         self._db_path = db_path
         self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
+        self._pending_writes = 0
+        self._commit_batch_size = 50
         self._init_schema()
 
     def close(self) -> None:
+        self.flush()
         self._conn.close()
 
     def _init_schema(self) -> None:
@@ -66,6 +69,46 @@ class FingerprintDatabase:
             p_hash=int(row["p_hash"]),
         )
 
+    def get_cached_bulk(
+        self,
+        signatures: list[tuple[Path, float, int]],
+    ) -> dict[str, CachedFingerprint]:
+        if not signatures:
+            return {}
+
+        by_path: dict[str, tuple[float, int]] = {
+            str(path): (mtime, size) for path, mtime, size in signatures
+        }
+        placeholders = ",".join("?" for _ in by_path)
+        rows = self._conn.execute(
+            f"SELECT * FROM fingerprints WHERE path IN ({placeholders})",
+            tuple(by_path.keys()),
+        ).fetchall()
+
+        cached: dict[str, CachedFingerprint] = {}
+        for row in rows:
+            path = row["path"]
+            expected = by_path.get(path)
+            if expected is None:
+                continue
+
+            mtime, size_bytes = expected
+            if row["mtime"] != mtime or row["size_bytes"] != size_bytes:
+                continue
+
+            cached[path] = CachedFingerprint(
+                path=Path(path),
+                mtime=row["mtime"],
+                size_bytes=row["size_bytes"],
+                duration_seconds=row["duration_seconds"],
+                width=row["width"],
+                height=row["height"],
+                bitrate=row["bitrate"],
+                d_hash=int(row["d_hash"]),
+                p_hash=int(row["p_hash"]),
+            )
+        return cached
+
     def upsert(self, fingerprint: VideoFingerprint, mtime: float) -> None:
         self._conn.execute(
             """
@@ -95,4 +138,12 @@ class FingerprintDatabase:
                 str(fingerprint.p_hash),
             ),
         )
+        self._pending_writes += 1
+        if self._pending_writes >= self._commit_batch_size:
+            self.flush()
+
+    def flush(self) -> None:
+        if self._pending_writes <= 0:
+            return
         self._conn.commit()
+        self._pending_writes = 0

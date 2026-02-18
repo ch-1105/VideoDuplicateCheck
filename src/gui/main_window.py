@@ -68,11 +68,18 @@ class MainWindow(QMainWindow):
         self.result_panel.preview_requested.connect(self.preview.set_video)
 
     def _open_settings(self) -> None:
-        dialog = SettingsDialog(self.config.frame_interval_seconds, self)
+        dialog = SettingsDialog(
+            self.config.frame_interval_seconds,
+            self.config.performance_profile,
+            self,
+        )
         if dialog.exec():
             self.config.frame_interval_seconds = dialog.frame_interval.value()
+            self.config.performance_profile = dialog.performance_profile.currentData()
             self.progress_label.setText(
-                f"设置已更新：抽帧间隔 {self.config.frame_interval_seconds} 秒"
+                "设置已更新："
+                f"抽帧间隔 {self.config.frame_interval_seconds} 秒，"
+                f"性能档位 {self.config.performance_profile}"
             )
 
     def _start_scan(self, root_dir: Path, threshold: float) -> None:
