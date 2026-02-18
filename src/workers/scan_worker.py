@@ -28,8 +28,8 @@ def _compute_fingerprint_workers(cpu_count: int, profile: str) -> int:
     if profile == "low":
         return 1
     if profile == "high":
-        # 尽量拉满，预留 2 核给系统和 GUI 保证不卡死
-        return max(2, cpu - 2)
+        # 控制峰值，避免线程过多导致瞬时卡顿
+        return max(2, min(6, cpu // 2))
     # medium: 保守策略，视频解码有内部多线程，worker 不宜过多
     return max(1, min(3, cpu // 6))
 
@@ -39,12 +39,12 @@ def _compute_metadata_workers(cpu_count: int, profile: str, total_files: int) ->
     base_by_profile = {
         "low": 2,
         "medium": 2,
-        "high": 6,
+        "high": 4,
     }
     cap_by_profile = {
         "low": 3,
         "medium": 4,
-        "high": max(6, cpu // 2),
+        "high": max(5, cpu // 3),
     }
 
     if total_files < 500:
@@ -70,7 +70,7 @@ def _compute_inflight_limit(max_workers: int, profile: str) -> int:
     multiplier_by_profile = {
         "low": 2,
         "medium": 2,
-        "high": 3,
+        "high": 2,
     }
     multiplier = multiplier_by_profile.get(profile, 2)
     return max_workers * multiplier
@@ -93,6 +93,10 @@ class ScanWorker(QObject):
         self._pause_event.set()
         self._stop_event = threading.Event()
         self._last_partial_emit_time = 0.0
+        self._last_progress_emit_time = 0.0
+        self._last_progress_value: tuple[int, int] | None = None
+        self._last_task_emit_time = 0.0
+        self._last_task_text = ""
 
     def request_pause(self) -> None:
         self._pause_event.clear()
@@ -154,19 +158,49 @@ class ScanWorker(QObject):
         self.partial_groups.emit(groups, processed, total)
         self._last_partial_emit_time = now
 
+    def _emit_progress(self, current: int, total: int, *, force: bool = False) -> None:
+        if total <= 0:
+            return
+
+        state = (current, total)
+        if not force and self._last_progress_value == state:
+            return
+
+        now = time.monotonic()
+        min_interval = max(0.0, self._config.progress_emit_min_interval_seconds)
+        if not force and current < total and now - self._last_progress_emit_time < min_interval:
+            return
+
+        self.progress.emit(current, total)
+        self._last_progress_value = state
+        self._last_progress_emit_time = now
+
+    def _emit_task(self, text: str, *, force: bool = False) -> None:
+        if not force and text == self._last_task_text:
+            return
+
+        now = time.monotonic()
+        min_interval = max(0.0, self._config.task_emit_min_interval_seconds)
+        if not force and now - self._last_task_emit_time < min_interval:
+            return
+
+        self.current_task.emit(text)
+        self._last_task_text = text
+        self._last_task_emit_time = now
+
     def run(self) -> None:
         try:
             if not self._assert_not_stopped():
                 return
 
             self.status.emit("扫描目录中...")
-            self.current_task.emit("递归扫描目录")
+            self._emit_task("递归扫描目录", force=True)
             cv2.setNumThreads(_compute_opencv_threads(self._config.performance_profile))
             scanner = VideoScanner(self._config.supported_extensions)
             files = scanner.scan(self._root_dir)
             total = len(files)
             self.status.emit(f"共发现 {total} 个视频文件")
-            self.progress.emit(0, total)
+            self._emit_progress(0, total, force=True)
 
             if not self._assert_not_stopped():
                 return
@@ -191,7 +225,7 @@ class ScanWorker(QObject):
 
                     batch = files[batch_start : batch_start + stat_batch_size]
                     batch_end = min(total, batch_start + len(batch))
-                    self.current_task.emit(f"缓存校验: {batch_end}/{total}")
+                    self._emit_task(f"缓存校验: {batch_end}/{total}")
 
                     signatures = [
                         sig for sig in stat_pool.map(_read_signature, batch) if sig is not None
@@ -220,13 +254,13 @@ class ScanWorker(QObject):
                                 )
                             )
                             processed += 1
-                            self.progress.emit(processed, total)
+                            self._emit_progress(processed, total)
                             self._maybe_emit_partial_groups(fingerprints, processed, total)
 
                     missing = len(batch) - len(signatures)
                     if missing > 0:
                         processed += missing
-                        self.progress.emit(processed, total)
+                        self._emit_progress(processed, total)
                         self.status.emit(f"跳过无法读取元数据文件: {missing} 个")
 
             self.status.emit(f"开始多线程提取指纹: {len(pending_paths)} 个文件待处理")
@@ -240,10 +274,11 @@ class ScanWorker(QObject):
                     max_workers,
                     self._config.performance_profile,
                 )
-                self.current_task.emit(
+                self._emit_task(
                     "指纹提取线程数: "
                     f"{max_workers} (档位: {self._config.performance_profile}, "
-                    f"并发窗口: {inflight_limit}, OpenCV线程: {cv2.getNumThreads()})"
+                    f"并发窗口: {inflight_limit}, OpenCV线程: {cv2.getNumThreads()})",
+                    force=True,
                 )
 
                 with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -291,7 +326,7 @@ class ScanWorker(QObject):
                                 self.stopped.emit()
                                 return
 
-                            self.current_task.emit(f"提取指纹: {source_path.name}")
+                            self._emit_task(f"提取指纹: {source_path.name}")
                             try:
                                 fp = future.result()
                             except Exception as exc:  # noqa: BLE001
@@ -306,7 +341,7 @@ class ScanWorker(QObject):
                                     fingerprints.append(fp)
 
                             processed += 1
-                            self.progress.emit(processed, total)
+                            self._emit_progress(processed, total)
                             self._maybe_emit_partial_groups(fingerprints, processed, total)
 
                             while len(future_map) < inflight_limit and submit_next():
@@ -318,10 +353,11 @@ class ScanWorker(QObject):
             if not self._assert_not_stopped():
                 return
 
+            self._emit_progress(total, total, force=True)
             self._maybe_emit_partial_groups(fingerprints, processed, total, force=True)
 
             self.status.emit("正在进行相似度比较...")
-            self.current_task.emit("比较指纹并聚类分组")
+            self._emit_task("比较指纹并聚类分组", force=True)
             groups: list[DuplicateGroup] = build_duplicate_groups(
                 fingerprints,
                 similarity_threshold=self._config.similarity_threshold,

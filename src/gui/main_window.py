@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 from PySide6.QtCore import QThread
 from PySide6.QtWidgets import (
@@ -32,6 +33,8 @@ class MainWindow(QMainWindow):
         self._last_scan_root: Path | None = None
         self._last_threshold: float = self.config.similarity_threshold
         self._restart_pending = False
+        self._last_partial_render_time = 0.0
+        self._last_partial_processed = 0
 
         root = QWidget(self)
         layout = QVBoxLayout(root)
@@ -94,6 +97,8 @@ class MainWindow(QMainWindow):
         self.preview.clear_preview("扫描进行中，等待结果...")
         self.progress_label.setText("准备开始扫描...")
         self.task_label.setText("当前任务: 初始化扫描任务")
+        self._last_partial_render_time = 0.0
+        self._last_partial_processed = 0
         self.scan_panel.set_scan_state(is_scanning=True, is_paused=False)
 
         worker = ScanWorker(root_dir=root_dir, config=self.config)
@@ -142,7 +147,19 @@ class MainWindow(QMainWindow):
         self.scan_panel.set_scan_state(is_scanning=False, is_paused=False)
 
     def _on_partial_groups(self, groups: list[DuplicateGroup], processed: int, total: int) -> None:
-        self.result_panel.set_groups(groups)
+        now = time.monotonic()
+        min_delta = max(120, self.config.partial_result_batch_size * 2)
+        enough_progress = processed - self._last_partial_processed >= min_delta
+        enough_time = (
+            now - self._last_partial_render_time >= self.config.partial_result_min_interval_seconds
+        )
+        should_render = processed >= total or (enough_progress and enough_time)
+
+        if should_render:
+            self.result_panel.set_groups(groups)
+            self._last_partial_processed = processed
+            self._last_partial_render_time = now
+
         self.progress_label.setText(
             f"批量输出中：已处理 {processed}/{total}，当前重复组 {len(groups)}"
         )
