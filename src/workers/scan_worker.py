@@ -68,12 +68,39 @@ def _compute_opencv_threads(profile: str) -> int:
 
 def _compute_inflight_limit(max_workers: int, profile: str) -> int:
     multiplier_by_profile = {
-        "low": 2,
+        "low": 1,
         "medium": 2,
-        "high": 2,
+        "high": 3,
     }
     multiplier = multiplier_by_profile.get(profile, 2)
     return max_workers * multiplier
+
+
+def _compute_stat_batch_size(profile: str) -> int:
+    batch_by_profile = {
+        "low": 80,
+        "medium": 200,
+        "high": 400,
+    }
+    return batch_by_profile.get(profile, 200)
+
+
+def _compute_batch_pause_seconds(profile: str) -> float:
+    pause_by_profile = {
+        "low": 0.02,
+        "medium": 0.01,
+        "high": 0.0,
+    }
+    return pause_by_profile.get(profile, 0.01)
+
+
+def _compute_yield_settings(profile: str) -> tuple[int, float]:
+    settings = {
+        "low": (2, 0.03),
+        "medium": (4, 0.01),
+        "high": (0, 0.0),
+    }
+    return settings.get(profile, (4, 0.01))
 
 
 class ScanWorker(QObject):
@@ -209,7 +236,8 @@ class ScanWorker(QObject):
             fingerprints: list[VideoFingerprint] = []
             pending_paths: list[Path] = []
             processed = 0
-            stat_batch_size = 200
+            stat_batch_size = _compute_stat_batch_size(self._config.performance_profile)
+            batch_pause_seconds = _compute_batch_pause_seconds(self._config.performance_profile)
             metadata_workers = _compute_metadata_workers(
                 os.cpu_count() or 1,
                 self._config.performance_profile,
@@ -263,6 +291,9 @@ class ScanWorker(QObject):
                         self._emit_progress(processed, total)
                         self.status.emit(f"跳过无法读取元数据文件: {missing} 个")
 
+                    if batch_pause_seconds > 0:
+                        time.sleep(batch_pause_seconds)
+
             self.status.emit(f"开始多线程提取指纹: {len(pending_paths)} 个文件待处理")
             if pending_paths:
                 max_workers = _compute_fingerprint_workers(
@@ -274,6 +305,10 @@ class ScanWorker(QObject):
                     max_workers,
                     self._config.performance_profile,
                 )
+                yield_every, yield_sleep = _compute_yield_settings(
+                    self._config.performance_profile,
+                )
+                yield_counter = 0
                 self._emit_task(
                     "指纹提取线程数: "
                     f"{max_workers} (档位: {self._config.performance_profile}, "
@@ -343,6 +378,12 @@ class ScanWorker(QObject):
                             processed += 1
                             self._emit_progress(processed, total)
                             self._maybe_emit_partial_groups(fingerprints, processed, total)
+
+                            if yield_every > 0 and yield_sleep > 0:
+                                yield_counter += 1
+                                if yield_counter >= yield_every:
+                                    time.sleep(yield_sleep)
+                                    yield_counter = 0
 
                             while len(future_map) < inflight_limit and submit_next():
                                 continue

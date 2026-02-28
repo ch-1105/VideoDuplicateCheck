@@ -19,6 +19,6 @@ def test_compute_metadata_workers_high_profile_is_capped() -> None:
 
 
 def test_compute_inflight_limit_profiles() -> None:
-    assert _compute_inflight_limit(4, "low") == 8
+    assert _compute_inflight_limit(4, "low") == 4
     assert _compute_inflight_limit(4, "medium") == 8
-    assert _compute_inflight_limit(4, "high") == 8
+    assert _compute_inflight_limit(4, "high") == 12
