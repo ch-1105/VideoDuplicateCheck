@@ -1,10 +1,14 @@
 from dataclasses import dataclass
+import math
 from pathlib import Path
 
 import cv2
 
 from ..utils.video_info import VideoInfo, read_video_info
 from .hasher import FrameHashes, dhash, phash
+
+# Bump this when sampling or hash aggregation changes so stale cache rows are ignored.
+FINGERPRINT_ALGORITHM_VERSION = 2
 
 
 @dataclass(slots=True)
@@ -19,9 +23,14 @@ class VideoFingerprint:
     p_hash: int
 
 
-def extract_fingerprint(path: Path, frame_interval_seconds: int) -> VideoFingerprint:
+def extract_fingerprint(
+    path: Path,
+    frames_per_minute: int,
+    min_sample_frames: int,
+    max_sample_frames: int,
+) -> VideoFingerprint:
     info = read_video_info(path)
-    hashes = _hash_video(info, frame_interval_seconds)
+    hashes = _hash_video(info, frames_per_minute, min_sample_frames, max_sample_frames)
     return VideoFingerprint(
         path=path,
         size_bytes=info.size_bytes,
@@ -34,42 +43,68 @@ def extract_fingerprint(path: Path, frame_interval_seconds: int) -> VideoFingerp
     )
 
 
-def _hash_video(info: VideoInfo, frame_interval_seconds: int) -> FrameHashes:
+def _hash_video(
+    info: VideoInfo,
+    frames_per_minute: int,
+    min_sample_frames: int,
+    max_sample_frames: int,
+) -> FrameHashes:
     cap = cv2.VideoCapture(str(info.path))
     if not cap.isOpened():
         raise ValueError(f"Failed to open video for hashing: {info.path}")
 
-    fps = info.fps if info.fps > 0 else 1.0
-    stride = max(1, int(frame_interval_seconds * fps))
-    total = max(1, info.frame_count)
+    try:
+        frame_indexes = _sample_frame_indexes(
+            info,
+            frames_per_minute,
+            min_sample_frames,
+            max_sample_frames,
+        )
 
-    d_values: list[int] = []
-    p_values: list[int] = []
-    idx = 0
-    next_sample = 0
+        d_values: list[int] = []
+        p_values: list[int] = []
 
-    while idx < total:
-        if idx < next_sample:
-            if not cap.grab():
-                break
-            idx += 1
-            continue
+        for frame_index in frame_indexes:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ok, frame = cap.read()
+            if not ok:
+                continue
 
-        ok, frame = cap.read()
-        if not ok:
-            break
-
-        d_values.append(dhash(frame))
-        p_values.append(phash(frame))
-        next_sample += stride
-        idx += 1
-
-    cap.release()
+            d_values.append(dhash(frame))
+            p_values.append(phash(frame))
+    finally:
+        cap.release()
 
     if not d_values or not p_values:
         return FrameHashes(d_hash=0, p_hash=0)
 
     return FrameHashes(d_hash=_majority_hash(d_values), p_hash=_majority_hash(p_values))
+
+
+def _sample_frame_indexes(
+    info: VideoInfo,
+    frames_per_minute: int,
+    min_sample_frames: int,
+    max_sample_frames: int,
+) -> list[int]:
+    total_frames = max(1, info.frame_count)
+    duration_minutes = max(0.0, info.duration_seconds) / 60
+    planned_frames = math.ceil(duration_minutes * max(1, frames_per_minute))
+    sample_count = min(max(planned_frames, min_sample_frames), max_sample_frames, total_frames)
+
+    if sample_count <= 1:
+        return [total_frames // 2]
+    if sample_count >= total_frames:
+        return list(range(total_frames))
+
+    # Avoid credits, intro cards, and end slates dominating the video fingerprint.
+    start = int((total_frames - 1) * 0.05)
+    end = int((total_frames - 1) * 0.95)
+    if end <= start:
+        return sorted(set(range(total_frames)))
+
+    step = (end - start) / (sample_count - 1)
+    return sorted({round(start + step * idx) for idx in range(sample_count)})
 
 
 def _majority_hash(values: list[int], bit_length: int = 64) -> int:

@@ -9,7 +9,9 @@ PerformanceProfile = Literal["low", "medium", "high"]
 @dataclass(slots=True)
 class AppConfig:
     cache_db: Path = Path("video_cache.sqlite3")
-    frame_interval_seconds: int = 10
+    frames_per_minute: int = 3
+    min_sample_frames: int = 12
+    max_sample_frames: int = 180
     similarity_threshold: float = 0.9
     duration_tolerance_seconds: float = 2.0
     partial_result_batch_size: int = 100

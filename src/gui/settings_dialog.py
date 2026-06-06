@@ -6,7 +6,7 @@ from ..config import PerformanceProfile
 class SettingsDialog(QDialog):
     def __init__(
         self,
-        frame_interval: int,
+        frames_per_minute: int,
         performance_profile: PerformanceProfile,
         parent=None,
     ) -> None:
@@ -14,15 +14,15 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("设置")
 
         layout = QFormLayout(self)
-        self.frame_interval = QSpinBox(self)
-        self.frame_interval.setRange(1, 60)
-        self.frame_interval.setValue(frame_interval)
-        layout.addRow("抽帧间隔(秒)", self.frame_interval)
+        self.frames_per_minute = QSpinBox(self)
+        self.frames_per_minute.setRange(1, 12)
+        self.frames_per_minute.setValue(frames_per_minute)
+        layout.addRow("每分钟抽帧数", self.frames_per_minute)
 
         self.performance_profile = QComboBox(self)
-        self.performance_profile.addItem("低（更流畅）", "low")
-        self.performance_profile.addItem("中（默认）", "medium")
-        self.performance_profile.addItem("高（更快）", "high")
+        self.performance_profile.addItem("低资源占用", "low")
+        self.performance_profile.addItem("中资源占用（默认）", "medium")
+        self.performance_profile.addItem("高资源占用", "high")
 
         selected = self.performance_profile.findData(performance_profile)
         if selected >= 0:

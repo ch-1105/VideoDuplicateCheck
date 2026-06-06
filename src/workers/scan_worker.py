@@ -10,7 +10,11 @@ from PySide6.QtCore import QObject, Signal
 from ..config import AppConfig
 from ..core.comparator import DuplicateGroup
 from ..core.database import FingerprintDatabase
-from ..core.fingerprint import VideoFingerprint, extract_fingerprint
+from ..core.fingerprint import (
+    FINGERPRINT_ALGORITHM_VERSION,
+    VideoFingerprint,
+    extract_fingerprint,
+)
 from ..core.scanner import VideoScanner
 from .compare_worker import build_duplicate_groups
 
@@ -232,7 +236,13 @@ class ScanWorker(QObject):
             if not self._assert_not_stopped():
                 return
 
-            db = FingerprintDatabase(self._config.cache_db)
+            db = FingerprintDatabase(
+                self._config.cache_db,
+                FINGERPRINT_ALGORITHM_VERSION,
+                self._config.frames_per_minute,
+                self._config.min_sample_frames,
+                self._config.max_sample_frames,
+            )
             fingerprints: list[VideoFingerprint] = []
             pending_paths: list[Path] = []
             processed = 0
@@ -328,7 +338,9 @@ class ScanWorker(QObject):
                         future = pool.submit(
                             extract_fingerprint,
                             source_path,
-                            self._config.frame_interval_seconds,
+                            self._config.frames_per_minute,
+                            self._config.min_sample_frames,
+                            self._config.max_sample_frames,
                         )
                         future_map[future] = source_path
                         return True

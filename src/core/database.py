@@ -19,8 +19,19 @@ class CachedFingerprint:
 
 
 class FingerprintDatabase:
-    def __init__(self, db_path: Path) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        fingerprint_version: int,
+        frames_per_minute: int,
+        min_sample_frames: int,
+        max_sample_frames: int,
+    ) -> None:
         self._db_path = db_path
+        self._fingerprint_version = fingerprint_version
+        self._frames_per_minute = frames_per_minute
+        self._min_sample_frames = min_sample_frames
+        self._max_sample_frames = max_sample_frames
         self._conn = sqlite3.connect(db_path, timeout=5.0)
         self._conn.row_factory = sqlite3.Row
         self._configure_connection()
@@ -51,16 +62,50 @@ class FingerprintDatabase:
                 bitrate INTEGER NOT NULL,
                 d_hash TEXT NOT NULL,
                 p_hash TEXT NOT NULL,
+                fingerprint_version INTEGER NOT NULL DEFAULT 0,
+                frames_per_minute INTEGER NOT NULL DEFAULT 0,
+                min_sample_frames INTEGER NOT NULL DEFAULT 0,
+                max_sample_frames INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        # Existing user caches may predate sampling parameters, so migrate in place.
+        self._ensure_column("fingerprint_version", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("frames_per_minute", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("min_sample_frames", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("max_sample_frames", "INTEGER NOT NULL DEFAULT 0")
         self._conn.commit()
+
+    def _ensure_column(self, name: str, definition: str) -> None:
+        columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(fingerprints)").fetchall()
+        }
+        if name in columns:
+            return
+        self._conn.execute(f"ALTER TABLE fingerprints ADD COLUMN {name} {definition}")
 
     def get_cached(self, path: Path, mtime: float, size_bytes: int) -> CachedFingerprint | None:
         row = self._conn.execute(
-            "SELECT * FROM fingerprints WHERE path = ? AND mtime = ? AND size_bytes = ?",
-            (str(path), mtime, size_bytes),
+            """
+            SELECT * FROM fingerprints
+            WHERE path = ?
+              AND mtime = ?
+              AND size_bytes = ?
+              AND fingerprint_version = ?
+              AND frames_per_minute = ?
+              AND min_sample_frames = ?
+              AND max_sample_frames = ?
+            """,
+            (
+                str(path),
+                mtime,
+                size_bytes,
+                self._fingerprint_version,
+                self._frames_per_minute,
+                self._min_sample_frames,
+                self._max_sample_frames,
+            ),
         ).fetchone()
         if row is None:
             return None
@@ -103,6 +148,14 @@ class FingerprintDatabase:
             if row["mtime"] != mtime or row["size_bytes"] != size_bytes:
                 continue
 
+            if (
+                row["fingerprint_version"] != self._fingerprint_version
+                or row["frames_per_minute"] != self._frames_per_minute
+                or row["min_sample_frames"] != self._min_sample_frames
+                or row["max_sample_frames"] != self._max_sample_frames
+            ):
+                continue
+
             cached[path] = CachedFingerprint(
                 path=Path(path),
                 mtime=row["mtime"],
@@ -120,8 +173,22 @@ class FingerprintDatabase:
         self._conn.execute(
             """
             INSERT INTO fingerprints
-            (path, mtime, size_bytes, duration_seconds, width, height, bitrate, d_hash, p_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (
+                path,
+                mtime,
+                size_bytes,
+                duration_seconds,
+                width,
+                height,
+                bitrate,
+                d_hash,
+                p_hash,
+                fingerprint_version,
+                frames_per_minute,
+                min_sample_frames,
+                max_sample_frames
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
               mtime=excluded.mtime,
               size_bytes=excluded.size_bytes,
@@ -131,6 +198,10 @@ class FingerprintDatabase:
               bitrate=excluded.bitrate,
               d_hash=excluded.d_hash,
               p_hash=excluded.p_hash,
+              fingerprint_version=excluded.fingerprint_version,
+              frames_per_minute=excluded.frames_per_minute,
+              min_sample_frames=excluded.min_sample_frames,
+              max_sample_frames=excluded.max_sample_frames,
               updated_at=CURRENT_TIMESTAMP
             """,
             (
@@ -143,6 +214,10 @@ class FingerprintDatabase:
                 fingerprint.bitrate,
                 str(fingerprint.d_hash),
                 str(fingerprint.p_hash),
+                self._fingerprint_version,
+                self._frames_per_minute,
+                self._min_sample_frames,
+                self._max_sample_frames,
             ),
         )
         self._pending_writes += 1

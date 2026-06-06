@@ -19,43 +19,65 @@ def find_duplicate_groups(
     if len(fingerprints) < 2:
         return []
 
-    buckets: dict[int, list[VideoFingerprint]] = {}
-    for fp in fingerprints:
-        bucket_key = int(fp.duration_seconds / max(duration_tolerance_seconds, 1e-6))
-        buckets.setdefault(bucket_key, []).append(fp)
+    ordered = sorted(fingerprints, key=lambda fp: fp.duration_seconds)
+    # Union-find keeps transitive matches together, for example A~B and B~C.
+    parent = list(range(len(ordered)))
+    group_similarity: dict[int, float] = {}
 
-    groups: list[DuplicateGroup] = []
-    visited: set[str] = set()
-
-    for candidates in buckets.values():
-        for idx, source in enumerate(candidates):
-            if str(source.path) in visited:
+    for source_idx, source in enumerate(ordered):
+        for target_idx in range(source_idx + 1, len(ordered)):
+            target = ordered[target_idx]
+            if target.duration_seconds - source.duration_seconds > duration_tolerance_seconds:
+                break
+            if not _metadata_candidate(source, target, duration_tolerance_seconds):
                 continue
 
-            group = [source]
-            min_similarity = 1.0
-            for target in candidates[idx + 1 :]:
-                if str(target.path) in visited:
-                    continue
-                if not _metadata_candidate(source, target, duration_tolerance_seconds):
-                    continue
-                similarity = _combined_similarity(source, target)
-                if similarity >= similarity_threshold:
-                    group.append(target)
-                    min_similarity = min(min_similarity, similarity)
-
-            if len(group) > 1:
-                for item in group:
-                    visited.add(str(item.path))
-                groups.append(
-                    DuplicateGroup(
-                        items=sorted(group, key=lambda x: (x.path.name.lower(), x.size_bytes)),
-                        similarity=min_similarity,
-                        recommended_keep=_recommend_keep(group),
-                    )
+            similarity = _combined_similarity(source, target)
+            if similarity >= similarity_threshold:
+                source_root = _find(parent, source_idx)
+                target_root = _find(parent, target_idx)
+                previous = min(
+                    group_similarity.pop(source_root, 1.0),
+                    group_similarity.pop(target_root, 1.0),
                 )
+                root = _union(parent, source_root, target_root)
+                group_similarity[root] = min(previous, similarity)
+
+    grouped: dict[int, list[VideoFingerprint]] = {}
+    for idx, fingerprint in enumerate(ordered):
+        root = _find(parent, idx)
+        grouped.setdefault(root, []).append(fingerprint)
+
+    groups: list[DuplicateGroup] = []
+    for root, items in grouped.items():
+        if len(items) < 2:
+            continue
+        sorted_items = sorted(items, key=lambda x: (x.path.name.lower(), x.size_bytes))
+        groups.append(
+            DuplicateGroup(
+                items=sorted_items,
+                similarity=group_similarity.get(root, 1.0),
+                recommended_keep=_recommend_keep(sorted_items),
+            )
+        )
 
     return groups
+
+
+def _find(parent: list[int], idx: int) -> int:
+    while parent[idx] != idx:
+        parent[idx] = parent[parent[idx]]
+        idx = parent[idx]
+    return idx
+
+
+def _union(parent: list[int], a: int, b: int) -> int:
+    root_a = _find(parent, a)
+    root_b = _find(parent, b)
+    if root_a == root_b:
+        return root_a
+    parent[root_b] = root_a
+    return root_a
 
 
 def _combined_similarity(a: VideoFingerprint, b: VideoFingerprint) -> float:

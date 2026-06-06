@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 import time
 
@@ -72,16 +73,16 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(
-            self.config.frame_interval_seconds,
+            self.config.frames_per_minute,
             self.config.performance_profile,
             self,
         )
         if dialog.exec():
-            self.config.frame_interval_seconds = dialog.frame_interval.value()
+            self.config.frames_per_minute = dialog.frames_per_minute.value()
             self.config.performance_profile = dialog.performance_profile.currentData()
             self.progress_label.setText(
                 "设置已更新："
-                f"抽帧间隔 {self.config.frame_interval_seconds} 秒，"
+                f"每分钟抽帧 {self.config.frames_per_minute} 帧，"
                 f"性能档位 {self.config.performance_profile}"
             )
 
@@ -101,7 +102,8 @@ class MainWindow(QMainWindow):
         self._last_partial_processed = 0
         self.scan_panel.set_scan_state(is_scanning=True, is_paused=False)
 
-        worker = ScanWorker(root_dir=root_dir, config=self.config)
+        scan_config = replace(self.config, supported_extensions=set(self.config.supported_extensions))
+        worker = ScanWorker(root_dir=root_dir, config=scan_config)
         thread = QThread(self)
 
         worker.moveToThread(thread)

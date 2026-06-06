@@ -64,3 +64,32 @@ def test_find_duplicate_groups_accepts_close_metadata() -> None:
 
     assert len(groups) == 1
     assert len(groups[0].items) == 2
+
+
+def test_find_duplicate_groups_compares_duration_boundary() -> None:
+    a = _fp("a.mp4", d_hash=0, p_hash=0, dur=1.9)
+    b = _fp("b.mp4", d_hash=0, p_hash=0, dur=2.1)
+
+    groups = find_duplicate_groups(
+        [a, b],
+        similarity_threshold=0.95,
+        duration_tolerance_seconds=2.0,
+    )
+
+    assert len(groups) == 1
+    assert len(groups[0].items) == 2
+
+
+def test_find_duplicate_groups_clusters_transitive_matches() -> None:
+    a = _fp("a.mp4", d_hash=0, p_hash=0)
+    b = _fp("b.mp4", d_hash=1, p_hash=1)
+    c = _fp("c.mp4", d_hash=3, p_hash=3)
+
+    groups = find_duplicate_groups(
+        [a, b, c],
+        similarity_threshold=0.96,
+        duration_tolerance_seconds=2.0,
+    )
+
+    assert len(groups) == 1
+    assert [item.path.name for item in groups[0].items] == ["a.mp4", "b.mp4", "c.mp4"]
